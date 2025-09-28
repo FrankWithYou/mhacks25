@@ -46,12 +46,14 @@ class QuoteRequest(BaseModel):
 class QuoteResponse(BaseModel):
     """Response with pricing and terms for a task"""
     job_id: str = Field(..., description="Unique identifier for this job")
+    task: Optional[TaskType] = Field(default=None, description="Task type for this quote")
     price: int = Field(..., description="Price in atestfet (smallest unit)")
     denom: str = Field(default="atestfet", description="Token denomination")
     ttl: int = Field(..., description="Time to live in seconds")
     terms_hash: str = Field(..., description="Hash of the terms for integrity")
     bond_required: int = Field(..., description="Bond amount required in atestfet")
     tool_address: str = Field(..., description="Tool agent address")
+    tool_pubkey: Optional[str] = Field(default=None, description="Tool public key for verification (MVP: HMAC shared secret)")
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
     class Config:

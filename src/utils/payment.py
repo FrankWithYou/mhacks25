@@ -34,9 +34,17 @@ class PaymentManager:
             Balance in atestfet (smallest unit)
         """
         try:
-            # Get wallet balance using the agent's ledger
-            balance = ctx.ledger.query_bank_balance(ctx.agent.address, "atestfet")
-            logger.info(f"Current balance for {ctx.agent.address}: {balance} atestfet")
+            # Resolve wallet address from context safely across versions
+            wallet_address = None
+            try:
+                wallet_address = ctx.wallet.address()  # type: ignore[attr-defined]
+            except Exception:
+                try:
+                    wallet_address = ctx.agent.wallet.address()  # type: ignore[attr-defined]
+                except Exception:
+                    raise PaymentError("Wallet not available in context")
+            balance = ctx.ledger.query_bank_balance(wallet_address, "atestfet")
+            logger.info(f"Current balance for {wallet_address}: {balance} atestfet")
             return int(balance)
             
         except Exception as e:
@@ -65,11 +73,22 @@ class PaymentManager:
                 raise PaymentError(f"Insufficient balance: {current_balance} < {amount}")
             
             # Send tokens using the agent's ledger
+            # Resolve wallet object
+            try:
+                wallet_obj = ctx.wallet  # type: ignore[attr-defined]
+            except Exception:
+                try:
+                    wallet_obj = ctx.agent.wallet  # type: ignore[attr-defined]
+                except Exception:
+                    wallet_obj = None
+            if wallet_obj is None:
+                raise PaymentError("Wallet not available in context")
+
             tx_response = ctx.ledger.send_tokens(
                 destination=recipient,
                 amount=amount,
                 denom="atestfet",
-                wallet=ctx.wallet,
+                wallet=wallet_obj,
                 memo=memo
             )
             
@@ -156,7 +175,17 @@ class PaymentManager:
             logger.info(f"Insufficient balance ({current_balance}), requesting from faucet...")
             
             # Request tokens from faucet
-            faucet_response = get_faucet(ctx.wallet.address())
+            # Resolve wallet address
+            try:
+                faucet_address = ctx.wallet.address()  # type: ignore[attr-defined]
+            except Exception:
+                try:
+                    faucet_address = ctx.agent.wallet.address()  # type: ignore[attr-defined]
+                except Exception:
+                    logger.warning("Wallet address not available; cannot request faucet")
+                    return False
+
+            faucet_response = get_faucet(faucet_address)
             
             if faucet_response:
                 logger.info("Faucet request successful")

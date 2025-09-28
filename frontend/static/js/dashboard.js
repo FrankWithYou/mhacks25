@@ -6,6 +6,7 @@ class MarketplaceDashboard {
         this.currentJobId = null;
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
+        this.toolAgents = {};
         
         this.init();
     }
@@ -76,6 +77,9 @@ class MarketplaceDashboard {
             case 'job_update':
                 this.handleJobUpdate(data);
                 break;
+            case 'agent_update':
+                this.handleAgentUpdate(data);
+                break;
             case 'error':
                 this.addActivityMessage(data.message, 'error');
                 break;
@@ -120,6 +124,10 @@ class MarketplaceDashboard {
                 progressBar.className = 'progress-bar progress-bar-striped progress-bar-animated step-accept';
                 progressBar.style.width = '40%';
                 break;
+            case 'BONDED':
+                progressBar.className = 'progress-bar progress-bar-striped progress-bar-animated step-accept';
+                progressBar.style.width = '50%';
+                break;
             case 'IN_PROGRESS':
                 progressBar.className = 'progress-bar progress-bar-striped progress-bar-animated step-execute';
                 progressBar.style.width = '60%';
@@ -143,7 +151,8 @@ class MarketplaceDashboard {
         }
 
         // Update current step
-        document.getElementById('currentStep').textContent = data.message;
+        const sourcePrefix = data.source ? `[${data.source.toUpperCase()}] ` : '';
+        document.getElementById('currentStep').textContent = sourcePrefix + data.message;
 
         // Show issue link if available
         if (data.issue_url) {
@@ -158,11 +167,15 @@ class MarketplaceDashboard {
             activityClass = 'error';
         } else if (data.status === 'PAID' || data.status === 'VERIFIED') {
             activityClass = 'success';
-        } else if (data.status === 'IN_PROGRESS') {
+        } else if (data.status === 'IN_PROGRESS' || data.status === 'BONDED' || data.status === 'ACCEPTED') {
             activityClass = 'warning';
         }
 
-        this.addActivityMessage(data.message, activityClass);
+        let msg = (data.source ? `[${data.source}] ` : '') + data.message;
+        if (data.tx_hash) {
+            msg += ` (tx: ${String(data.tx_hash).substring(0, 12)}...)`;
+        }
+        this.addActivityMessage(msg, activityClass);
 
         // If job is final, update the jobs table
         if (data.final || data.status === 'PAID' || data.status === 'FAILED') {
@@ -230,12 +243,30 @@ class MarketplaceDashboard {
     }
 
     setupEventListeners() {
-        // Form submission
+        // Create Issue form
         const form = document.getElementById('createIssueForm');
-        form.addEventListener('submit', (e) => {
-            e.preventDefault();
-            this.submitCreateIssue();
-        });
+        if (form) {
+            form.addEventListener('submit', (e) => {
+                e.preventDefault();
+                this.submitCreateIssue();
+            });
+        }
+        // Translate form
+        const tform = document.getElementById('translateForm');
+        if (tform) {
+            tform.addEventListener('submit', (e) => {
+                e.preventDefault();
+                this.submitTranslate();
+            });
+        }
+        // Ask Client form
+        const aform = document.getElementById('askForm');
+        if (aform) {
+            aform.addEventListener('submit', (e) => {
+                e.preventDefault();
+                this.submitAskClient();
+            });
+        }
 
         // Heartbeat to keep connection alive
         setInterval(() => {
@@ -261,14 +292,21 @@ class MarketplaceDashboard {
                 body: formData
             });
 
-            const result = await response.json();
+            let result = null;
+            let text = '';
+            try {
+                result = await response.json();
+            } catch (e) {
+                try { text = await response.text(); } catch (_) {}
+            }
 
             if (response.ok) {
-                this.addActivityMessage(`Job ${result.job_id} submitted successfully`, 'success');
+                this.addActivityMessage(`Create issue request submitted to client`, 'success');
                 form.reset();
                 form.elements.labels.value = 'innovationlab,hackathon,demo';
             } else {
-                throw new Error(result.detail || 'Failed to create issue');
+                const msg = (result && (result.detail || result.message)) || text || 'Failed to create issue';
+                throw new Error(msg);
             }
 
         } catch (error) {
@@ -278,6 +316,69 @@ class MarketplaceDashboard {
             // Reset loading state
             submitBtn.disabled = false;
             submitBtn.innerHTML = '<i class="fas fa-plus me-2"></i>Create Issue';
+            document.body.classList.remove('loading');
+        }
+    }
+
+    async submitTranslate() {
+        const form = document.getElementById('translateForm');
+        const formData = new FormData(form);
+        const submitBtn = document.getElementById('translateBtn');
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Translating...';
+        document.body.classList.add('loading');
+        try {
+            const response = await fetch('/translate', { method: 'POST', body: formData });
+            let result = null; let text = '';
+            try {
+                result = await response.json();
+            } catch (e) {
+                try { text = await response.text(); } catch (_) {}
+            }
+            if (response.ok) {
+                this.addActivityMessage(`Translate request submitted`, 'success');
+            } else {
+                const msg = (result && (result.detail || result.message)) || text || 'Failed to submit translate request';
+                throw new Error(msg);
+            }
+        } catch (error) {
+            console.error('Error translating:', error);
+            this.addActivityMessage(`Error: ${error.message}`, 'error');
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="fas fa-paper-plane me-2"></i>Translate';
+            document.body.classList.remove('loading');
+        }
+    }
+
+    async submitAskClient() {
+        const form = document.getElementById('askForm');
+        const formData = new FormData(form);
+        const submitBtn = document.getElementById('askBtn');
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Submitting...';
+        document.body.classList.add('loading');
+        try {
+            const response = await fetch('/ask-client', { method: 'POST', body: formData });
+            let result = null; let text = '';
+            try {
+                result = await response.json();
+            } catch (e) {
+                try { text = await response.text(); } catch (_) {}
+            }
+            if (response.ok) {
+                this.addActivityMessage(`Ask submitted to client`, 'success');
+                form.reset();
+            } else {
+                const msg = (result && (result.detail || result.message)) || text || 'Failed to submit ask';
+                throw new Error(msg);
+            }
+        } catch (error) {
+            console.error('Error asking client:', error);
+            this.addActivityMessage(`Error: ${error.message}`, 'error');
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="fas fa-magic me-2"></i>Ask Client';
             document.body.classList.remove('loading');
         }
     }
@@ -341,6 +442,37 @@ class MarketplaceDashboard {
         this.addActivityMessage(`Viewing details for job ${jobId.substring(0, 8)}...`, 'info');
         console.log('Show job details for:', jobId);
     }
+    handleAgentUpdate(data) {
+        const agent = data.agent || {};
+        const addr = agent.address || agent.wallet_address || 'unknown';
+        if (!addr) return;
+        this.toolAgents[addr] = agent;
+        this.renderToolAgents();
+    }
+
+    renderToolAgents() {
+        const listEl = document.getElementById('toolAgentsList');
+        const countEl = document.getElementById('toolAgentCount');
+        if (!listEl) return;
+        const agents = Object.values(this.toolAgents);
+        if (countEl) countEl.textContent = agents.length;
+        listEl.innerHTML = '';
+        agents.forEach(a => {
+            const div = document.createElement('div');
+            div.className = 'mb-2 p-2 border rounded';
+            const caps = (a.capabilities || []).join(', ');
+            const name = a.name || a.address?.substring(0, 12) + '...';
+            const price = a.price ? `${a.price / 1e18} testFET` : '-';
+            div.innerHTML = `
+                <div><strong>${name}</strong></div>
+                <div><small>Address: <code>${a.address || '-'}</code></small></div>
+                <div><small>Capabilities: ${caps || '-'}</small></div>
+                <div><small>Price: ${price}, Bond: ${a.bond ? a.bond / 1e18 : '-'} testFET</small></div>
+            `;
+            listEl.appendChild(div);
+        });
+    }
+
 }
 
 // Initialize dashboard when page loads

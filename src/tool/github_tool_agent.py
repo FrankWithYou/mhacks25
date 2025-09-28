@@ -30,6 +30,7 @@ from utils.crypto import (
     verify_client_signature
 )
 from utils.state_manager import StateManager
+from utils.frontend_events import send_frontend_event
 
 # Load environment variables
 load_dotenv()
@@ -81,6 +82,23 @@ async def startup_handler(ctx: Context):
         
         # Fund agent if low on tokens
         fund_agent_if_low(tool_agent.wallet.address())
+
+        # Announce to frontend
+        await send_frontend_event(
+            source="tool",
+            status="AVAILABLE",
+            message="GitHub tool agent online",
+            extra={
+                "tool_info": {
+                    "address": str(tool_agent.address),
+                    "name": tool_agent.name,
+                    "capabilities": [TaskType.CREATE_GITHUB_ISSUE.value],
+                    "price": DEFAULT_PRICE,
+                    "bond": DEFAULT_BOND,
+                    "port": 8001,
+                }
+            },
+        )
         
     except Exception as e:
         logger.error(f"Failed to initialize tool agent: {e}")
@@ -95,7 +113,7 @@ async def handle_quote_request(ctx: Context, sender: str, msg: QuoteRequest):
     if msg.task != TaskType.CREATE_GITHUB_ISSUE:
         ctx.logger.warning(f"Unsupported task type: {msg.task}")
         return
-    
+
     # Validate payload
     required_fields = ["title"]
     if not all(field in msg.payload for field in required_fields):
@@ -119,12 +137,14 @@ async def handle_quote_request(ctx: Context, sender: str, msg: QuoteRequest):
         # Create quote response
         quote = QuoteResponse(
             job_id=job_id,
+            task=msg.task,
             price=DEFAULT_PRICE,
             denom="atestfet",
             ttl=DEFAULT_TTL,
             terms_hash=terms_hash,
             bond_required=DEFAULT_BOND,
             tool_address=str(ctx.agent.address),
+            tool_pubkey=TOOL_SIGNING_KEY,
             timestamp=datetime.utcnow()
         )
         
@@ -146,6 +166,20 @@ async def handle_quote_request(ctx: Context, sender: str, msg: QuoteRequest):
             # Send quote response
             await ctx.send(sender, quote)
             ctx.logger.info(f"Sent quote {job_id} to {sender}: {DEFAULT_PRICE} atestfet")
+
+            # Frontend event: quoted
+            await send_frontend_event(
+                source="tool",
+                status="QUOTED",
+                message=f"Quote sent: {DEFAULT_PRICE} atestfet + bond {DEFAULT_BOND}",
+                job_id=job_id,
+                extra={
+                    "price": DEFAULT_PRICE,
+                    "bond_amount": DEFAULT_BOND,
+                    "client_address": sender,
+                    "tool_address": str(ctx.agent.address),
+                },
+            )
         else:
             ctx.logger.error(f"Failed to save job record for {job_id}")
             
@@ -172,6 +206,18 @@ async def handle_perform_request(ctx: Context, sender: str, msg: PerformRequest)
     if job_record.status != JobStatus.QUOTED:
         ctx.logger.warning(f"Job {msg.job_id} in invalid status: {job_record.status}")
         return
+
+    # Frontend event: accepted by client
+    await send_frontend_event(
+        source="tool",
+        status="ACCEPTED",
+        message="Perform request received from client",
+        job_id=msg.job_id,
+        extra={
+            "client_address": sender,
+            "tool_address": str(ctx.agent.address),
+        },
+    )
     
     # Verify terms hash
     quote_data = {
@@ -198,6 +244,14 @@ async def handle_perform_request(ctx: Context, sender: str, msg: PerformRequest)
             "perform_timestamp": datetime.utcnow(),
             "notes": job_record.notes + f"\\nPerform request received from {sender}"
         })
+
+        # Frontend event: in progress
+        await send_frontend_event(
+            source="tool",
+            status="IN_PROGRESS",
+            message="Executing task: creating GitHub issue",
+            job_id=msg.job_id,
+        )
         
         # Execute the task
         await execute_github_issue_task(ctx, job_record, msg)
@@ -251,6 +305,16 @@ async def execute_github_issue_task(ctx: Context, job_record: JobRecord, perform
             "receipt": receipt,
             "notes": job_record.notes + f"\\nGitHub issue created: {issue_url}"
         })
+
+        # Frontend event: completed
+        await send_frontend_event(
+            source="tool",
+            status="COMPLETED",
+            message="GitHub issue created and receipt prepared",
+            job_id=job_record.job_id,
+            issue_url=issue_url,
+            extra={"verifier_url": api_url},
+        )
         
         # Send receipt to client
         await ctx.send(job_record.client_address, receipt)
@@ -278,6 +342,13 @@ async def handle_bond_notification(ctx: Context, sender: str, msg: BondNotificat
             "status": JobStatus.BONDED,
             "notes": job_record.notes + f"\\nBond received: {msg.tx_hash}"
         })
+        # Frontend event: bonded
+        await send_frontend_event(
+            source="tool",
+            status="BONDED",
+            message=f"Bond received: {msg.tx_hash}",
+            job_id=msg.job_id,
+        )
         ctx.logger.info(f"Bond confirmed for job {msg.job_id}")
 
 # Chat protocol handlers for ASI:One integration

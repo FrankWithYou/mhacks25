@@ -118,7 +118,7 @@ class GitHubAPI:
             
             async with httpx.AsyncClient() as client:
                 logger.info(f"Making verification request to: {api_url}")
-                logger.info(f"Headers: {self.headers}")
+                # Do not log Authorization headers
                 response = await client.get(api_url, headers=self.headers)
                 logger.info(f"Response status: {response.status_code}")
                 

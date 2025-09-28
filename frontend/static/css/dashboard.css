@@ -129,6 +129,10 @@ body {
     background-color: #20c997;
 }
 
+.badge.status-bonded {
+    background-color: #6f42c1;
+}
+
 .badge.status-paid {
     background-color: var(--primary-color);
 }

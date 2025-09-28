@@ -29,14 +29,14 @@
             <div class="col-md-4">
                 <!-- System Status Card -->
                 <div class="card mb-4">
-                    <div class="card-header">
-                        <h5><i class="fas fa-server me-2"></i>System Status</h5>
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="fas fa-server me-2"></i>System Status</h5>
                     </div>
                     <div class="card-body">
                         <div id="systemStatus">
                             <div class="d-flex align-items-center mb-2">
                                 <span class="status-indicator online me-2"></span>
-                                <small>Tool Agent: <strong>Online</strong></small>
+                                <small>Tool Agents: <strong id="toolAgentCount">0</strong></small>
                             </div>
                             <div class="d-flex align-items-center mb-2">
                                 <span class="status-indicator online me-2"></span>
@@ -50,30 +50,30 @@
                     </div>
                 </div>
 
-                <!-- Create Issue Form -->
+                <!-- Tool Agents -->
                 <div class="card mb-4">
                     <div class="card-header">
-                        <h5><i class="fab fa-github me-2"></i>Create GitHub Issue</h5>
+                        <h5><i class="fas fa-robot me-2"></i>Tool Agents</h5>
                     </div>
                     <div class="card-body">
-                        <form id="createIssueForm">
+                        <div id="toolAgentsList" class="small"></div>
+                    </div>
+                </div>
+
+
+                <!-- Ask Client (ASI) -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5><i class="fas fa-user-astronaut me-2"></i>Ask Client (ASI)</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="askForm">
                             <div class="mb-3">
-                                <label for="title" class="form-label">Issue Title</label>
-                                <input type="text" class="form-control" id="title" name="title" 
-                                       placeholder="Enter issue title..." required>
+                                <label for="ask_text" class="form-label">Instruction</label>
+                                <textarea class="form-control" id="ask_text" name="text" rows="2" placeholder="Create a GitHub issue titled '...' or Translate 'Hello' to 'es'"></textarea>
                             </div>
-                            <div class="mb-3">
-                                <label for="body" class="form-label">Issue Body (Optional)</label>
-                                <textarea class="form-control" id="body" name="body" rows="3" 
-                                          placeholder="Enter issue description..."></textarea>
-                            </div>
-                            <div class="mb-3">
-                                <label for="labels" class="form-label">Labels</label>
-                                <input type="text" class="form-control" id="labels" name="labels" 
-                                       value="innovationlab,hackathon,demo">
-                            </div>
-                            <button type="submit" class="btn btn-primary w-100" id="createBtn">
-                                <i class="fas fa-plus me-2"></i>Create Issue
+                            <button type="submit" class="btn btn-outline-secondary w-100" id="askBtn">
+                                <i class="fas fa-magic me-2"></i>Ask Client
                             </button>
                         </form>
                     </div>
