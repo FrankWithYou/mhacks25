@@ -43,6 +43,12 @@ class StateManager:
                     tool_address TEXT,
                     price INTEGER,
                     bond_amount INTEGER,
+                    terms_hash TEXT,
+                    bond_tx_hash TEXT,
+                    bond_posted_timestamp TEXT,
+                    bond_return_tx_hash TEXT,
+                    bond_return_timestamp TEXT,
+                    payment_tx_hash TEXT,
                     quote_timestamp TEXT,
                     perform_timestamp TEXT,
                     completion_timestamp TEXT,
@@ -56,6 +62,20 @@ class StateManager:
                 )
             """)
             
+            for column_name, column_type in [
+                ("terms_hash", "TEXT"),
+                ("bond_tx_hash", "TEXT"),
+                ("bond_posted_timestamp", "TEXT"),
+                ("bond_return_tx_hash", "TEXT"),
+                ("bond_return_timestamp", "TEXT"),
+                ("payment_tx_hash", "TEXT")
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE jobs ADD COLUMN {column_name} {column_type}")
+                except sqlite3.OperationalError as e:
+                    if "duplicate column name" not in str(e):
+                        raise
+
             # Create indexes for common queries
             conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_client ON jobs(client_address)")
@@ -82,7 +102,7 @@ class StateManager:
                         price, bond_amount, quote_timestamp, perform_timestamp,
                         completion_timestamp, verification_timestamp, payment_timestamp,
                         receipt, verification_result, notes
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     job_record.job_id,
                     job_record.task.value,
@@ -92,6 +112,12 @@ class StateManager:
                     job_record.tool_address,
                     job_record.price,
                     job_record.bond_amount,
+                    job_record.terms_hash,
+                    job_record.bond_tx_hash,
+                    job_record.bond_posted_timestamp.isoformat() if job_record.bond_posted_timestamp else None,
+                    job_record.bond_return_tx_hash,
+                    job_record.bond_return_timestamp.isoformat() if job_record.bond_return_timestamp else None,
+                    job_record.payment_tx_hash,
                     job_record.quote_timestamp.isoformat() if job_record.quote_timestamp else None,
                     job_record.perform_timestamp.isoformat() if job_record.perform_timestamp else None,
                     job_record.completion_timestamp.isoformat() if job_record.completion_timestamp else None,

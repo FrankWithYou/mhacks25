@@ -30,6 +30,12 @@ class JobStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+
+class BondAction(str, Enum):
+    """Bond workflow actions"""
+    POSTED = "posted"
+    RETURNED = "returned"
+
 class QuoteRequest(BaseModel):
     """Request for a quote to perform a task"""
     task: TaskType = Field(..., description="The type of task to be performed")
@@ -90,12 +96,14 @@ class Receipt(BaseModel):
 
 
 class BondNotification(BaseModel):
-    """Notification of bond payment"""
+    """Notification related to job bond transfers"""
     job_id: str = Field(..., description="Job identifier")
-    tx_hash: str = Field(..., description="Transaction hash of bond payment")
+    tx_hash: str = Field(..., description="Transaction hash of the bond transfer")
     amount: int = Field(..., description="Bond amount in atestfet")
-    sender: str = Field(..., description="Address that sent the bond")
+    action: BondAction = Field(..., description="Bond action type (posted or returned)")
+    sender: str = Field(..., description="Address that initiated the transfer")
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+
 
     class Config:
         json_encoders = {
@@ -140,6 +148,12 @@ class JobRecord(BaseModel):
     tool_address: Optional[str] = None
     price: Optional[int] = None
     bond_amount: Optional[int] = None
+    terms_hash: Optional[str] = None
+    bond_tx_hash: Optional[str] = None
+    bond_posted_timestamp: Optional[datetime] = None
+    bond_return_tx_hash: Optional[str] = None
+    bond_return_timestamp: Optional[datetime] = None
+    payment_tx_hash: Optional[str] = None
     quote_timestamp: Optional[datetime] = None
     perform_timestamp: Optional[datetime] = None
     completion_timestamp: Optional[datetime] = None

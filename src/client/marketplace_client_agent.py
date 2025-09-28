@@ -21,7 +21,7 @@ from uagents_core.contrib.protocols.chat import (
 )
 
 from models.messages import (
-    QuoteRequest, QuoteResponse, PerformRequest, Receipt, 
+    QuoteRequest, QuoteResponse, PerformRequest, Receipt, BondNotification, BondAction,
     TaskType, JobStatus, JobRecord, PaymentNotification
 )
 from utils.verifier import TaskVerifier
@@ -126,95 +126,225 @@ async def request_github_issue(ctx: Context, tool_agent_address: str, title: str
         raise e
 
 @client_agent.on_message(QuoteResponse)
+
+@client_agent.on_message(QuoteResponse)
 async def handle_quote_response(ctx: Context, sender: str, msg: QuoteResponse):
     """Handle quote responses from tool agents"""
     ctx.logger.info(f"Received quote from {sender}: {msg.job_id} - {msg.price} {msg.denom}")
-    
+
     try:
-        # Create job record
+        perform_payload = {
+            "title": "Demo GitHub Issue from Marketplace",
+            "body": f"This issue was created through the trust-minimized agent marketplace\n\n"
+                    f"Job ID: {msg.job_id}\nTimestamp: {datetime.utcnow().isoformat()}",
+            "labels": ["innovationlab", "hackathon", "demo"]
+        }
+
+        quote_timestamp = datetime.utcnow()
         job_record = JobRecord(
             job_id=msg.job_id,
-            task=TaskType.CREATE_GITHUB_ISSUE,  # Inferred from context
-            payload={},  # Will be filled when we accept
+            task=TaskType.CREATE_GITHUB_ISSUE,
+            payload=perform_payload,
             status=JobStatus.QUOTED,
             client_address=str(ctx.agent.address),
             tool_address=sender,
             price=msg.price,
             bond_amount=msg.bond_required,
-            quote_timestamp=datetime.utcnow(),
-            notes=f"Quote received from {sender}"
+            terms_hash=msg.terms_hash,
+            quote_timestamp=quote_timestamp,
+            notes=f"Quote received from {sender}\nAwaiting bond from tool"
         )
-        
-        # Save job record
+
         if not state_manager.create_job(job_record):
             ctx.logger.error(f"Failed to save job record for {msg.job_id}")
             return
-        
-        # Check if we have sufficient balance
+
         total_required = msg.price + msg.bond_required
         current_balance = await payment_manager.get_balance(ctx)
-        
+
         if current_balance < total_required:
-            ctx.logger.warning(f"Insufficient balance for job {msg.job_id}: need {total_required}, have {current_balance}")
-            state_manager.update_job(msg.job_id, {
-                "status": JobStatus.FAILED,
-                "notes": job_record.notes + f"\\nInsufficient balance: {current_balance} < {total_required}"
-            })
+            ctx.logger.warning(
+                f"Insufficient balance for job {msg.job_id}: need {total_required}, have {current_balance}"
+            )
+            state_manager.update_job(
+                msg.job_id,
+                {
+                    "status": JobStatus.FAILED,
+                    "notes": job_record.notes + f"\nInsufficient balance: {current_balance} < {total_required}"
+                }
+            )
             return
-        
-        # Auto-accept the quote for demo purposes
-        # In a production system, this would be user-driven
-        await accept_quote(ctx, msg, sender)
-        
+
+        ctx.logger.info(f"Awaiting bond of {msg.bond_required} atestfet from {sender} for job {msg.job_id}")
+
     except Exception as e:
         ctx.logger.error(f"Error handling quote response: {e}")
 
-async def accept_quote(ctx: Context, quote: QuoteResponse, tool_address: str):
-    """Accept a quote and send perform request"""
+
+
+
+    
+
+async def accept_quote(ctx: Context, job_id: str) -> None:
+    """Accept a quote once bond has been posted and send the perform request."""
+    job_record = state_manager.get_job(job_id)
+    if not job_record:
+        ctx.logger.warning(f"Job {job_id} not found when attempting to accept quote")
+        return
+
+    existing_notes = job_record.notes or ""
+
+    if not job_record.terms_hash:
+        ctx.logger.warning(f"Missing terms hash for job {job_id}; cannot accept quote")
+        return
+
+    if not job_record.tool_address:
+        ctx.logger.warning(f"Missing tool address for job {job_id}; cannot accept quote")
+        return
+
+    if job_record.status not in {JobStatus.BONDED, JobStatus.QUOTED}:
+        ctx.logger.info(f"Job {job_id} in status {job_record.status}; skipping accept")
+        return
+
     try:
-        ctx.logger.info(f"Accepting quote {quote.job_id} from {tool_address}")
-        
-        # Create client signature
-        timestamp = datetime.utcnow()
+        perform_timestamp = datetime.utcnow()
         client_signature = create_client_signature(
-            quote.job_id, 
-            quote.terms_hash, 
-            timestamp, 
+            job_record.job_id,
+            job_record.terms_hash,
+            perform_timestamp,
             CLIENT_SIGNING_KEY
         )
-        
-        # Create perform request
+
         perform_request = PerformRequest(
-            job_id=quote.job_id,
-            payload={
-                "title": "Demo GitHub Issue from Marketplace",
-                "body": f"This issue was created through the trust-minimized agent marketplace\\n\\nJob ID: {quote.job_id}\\nTimestamp: {timestamp.isoformat()}",
-                "labels": ["innovationlab", "hackathon", "demo"]
-            },
-            terms_hash=quote.terms_hash,
+            job_id=job_record.job_id,
+            payload=job_record.payload,
+            terms_hash=job_record.terms_hash,
             client_signature=client_signature,
-            timestamp=timestamp
+            timestamp=perform_timestamp,
         )
-        
-        # Update job record
-        state_manager.update_job(quote.job_id, {
-            "status": JobStatus.ACCEPTED,
-            "perform_timestamp": timestamp,
-            "payload": perform_request.payload,
-            "notes": f"Quote accepted, perform request sent to {tool_address}"
-        })
-        
-        # Send perform request
-        await ctx.send(tool_address, perform_request)
-        
-        ctx.logger.info(f"Sent perform request for job {quote.job_id}")
-        
+
+        state_manager.update_job(
+            job_record.job_id,
+            {
+                "status": JobStatus.ACCEPTED,
+                "perform_timestamp": perform_timestamp,
+                "payload": perform_request.payload,
+                "notes": existing_notes + f"\nQuote accepted, perform request sent to {job_record.tool_address}"
+            },
+        )
+
+        await ctx.send(job_record.tool_address, perform_request)
+        ctx.logger.info(f"Sent perform request for job {job_record.job_id}")
+
     except Exception as e:
         ctx.logger.error(f"Error accepting quote: {e}")
-        state_manager.update_job(quote.job_id, {
-            "status": JobStatus.FAILED,
-            "notes": f"Error accepting quote: {str(e)}"
-        })
+        state_manager.update_job(
+            job_id,
+            {
+                "status": JobStatus.FAILED,
+                "notes": existing_notes + f"\nError accepting quote: {str(e)}"
+            },
+        )
+
+
+@client_agent.on_message(BondNotification)
+
+@client_agent.on_message(BondNotification)
+async def handle_bond_notification(ctx: Context, sender: str, msg: BondNotification):
+    """Process notifications about bond transfers."""
+    ctx.logger.info(f"Received bond notification for job {msg.job_id} from {sender}")
+
+    job_record: JobRecord | None = None
+    base_notes = ""
+
+    try:
+        job_record = state_manager.get_job(msg.job_id)
+        if not job_record:
+            ctx.logger.warning(f"Job {msg.job_id} not found when processing bond notification")
+            return
+
+        base_notes = job_record.notes or ""
+
+        if msg.action == BondAction.POSTED:
+            if sender != job_record.tool_address:
+                ctx.logger.warning(
+                    f"Ignoring bond notification from {sender}; expected {job_record.tool_address}"
+                )
+                return
+
+            if job_record.bond_amount and msg.amount < job_record.bond_amount:
+                ctx.logger.warning(
+                    f"Bond amount mismatch for job {msg.job_id}: expected {job_record.bond_amount}, received {msg.amount}"
+                )
+                state_manager.update_job(
+                    msg.job_id,
+                    {
+                        "status": JobStatus.FAILED,
+                        "notes": base_notes + f"\nBond amount mismatch: {msg.amount}"
+                    }
+                )
+                return
+
+            verified = await payment_manager.verify_transaction(
+                ctx,
+                msg.tx_hash,
+                msg.amount,
+                str(ctx.agent.address)
+            )
+
+            if not verified:
+                ctx.logger.warning(f"Unable to verify bond transaction {msg.tx_hash} for job {msg.job_id}")
+                state_manager.update_job(
+                    msg.job_id,
+                    {
+                        "status": JobStatus.FAILED,
+                        "notes": base_notes + f"\nBond verification failed for tx {msg.tx_hash}"
+                    }
+                )
+                return
+
+            state_manager.update_job(
+                msg.job_id,
+                {
+                    "status": JobStatus.BONDED,
+                    "bond_tx_hash": msg.tx_hash,
+                    "bond_posted_timestamp": datetime.utcnow(),
+                    "notes": base_notes + f"\nBond received: {msg.tx_hash}"
+                }
+            )
+
+            ctx.logger.info(f"Bond verified for job {msg.job_id}; accepting quote")
+            await accept_quote(ctx, msg.job_id)
+
+        elif msg.action == BondAction.RETURNED:
+            ctx.logger.info(f"Bond return notice for job {msg.job_id} with tx {msg.tx_hash}")
+            state_manager.update_job(
+                msg.job_id,
+                {
+                    "bond_return_tx_hash": msg.tx_hash,
+                    "bond_return_timestamp": datetime.utcnow(),
+                    "notes": base_notes + f"\nBond return acknowledged: {msg.tx_hash}"
+                }
+            )
+
+        else:
+            ctx.logger.info(f"Unhandled bond action {msg.action} for job {msg.job_id}")
+
+    except Exception as e:
+        ctx.logger.error(f"Error handling bond notification for job {msg.job_id}: {e}")
+        update_notes = (
+            base_notes + f"\nBond notification error: {str(e)}"
+            if base_notes else f"Bond notification error: {str(e)}"
+        )
+        state_manager.update_job(
+            msg.job_id,
+            {
+                "status": JobStatus.FAILED,
+                "notes": update_notes
+            }
+        )
+
+
 
 @client_agent.on_message(Receipt)
 async def handle_receipt(ctx: Context, sender: str, msg: Receipt):
@@ -247,29 +377,33 @@ async def handle_receipt(ctx: Context, sender: str, msg: Receipt):
     except Exception as e:
         ctx.logger.error(f"Error handling receipt: {e}")
 
+
 async def verify_and_pay(ctx: Context, job_record: JobRecord, receipt: Receipt):
-    """Verify task completion and process payment"""
+    """Verify task completion and process payment."""
     try:
         ctx.logger.info(f"Verifying and processing payment for job {job_record.job_id}")
-        
-        # Perform verification
+
+        notes_base = job_record.notes or ""
+
         verification_result = await task_verifier.verify_task_completion(
-            receipt, 
-            job_record.task, 
+            receipt,
+            job_record.task,
             TOOL_PUBLIC_KEY
         )
-        
-        # Update job with verification result
-        state_manager.update_job(job_record.job_id, {
-            "verification_timestamp": datetime.utcnow(),
-            "verification_result": verification_result,
-            "notes": job_record.notes + f"\\nVerification: {verification_result.details}"
-        })
-        
+
+        state_manager.update_job(
+            job_record.job_id,
+            {
+                "verification_timestamp": datetime.utcnow(),
+                "verification_result": verification_result,
+                "notes": notes_base + f"\nVerification: {verification_result.details}"
+            }
+        )
+        notes_base += f"\nVerification: {verification_result.details}"
+
         if verification_result.verified:
             ctx.logger.info(f"Verification passed for job {job_record.job_id}")
-            
-            # Send payment
+
             try:
                 tx_hash = await payment_manager.send_job_payment(
                     ctx,
@@ -277,51 +411,105 @@ async def verify_and_pay(ctx: Context, job_record: JobRecord, receipt: Receipt):
                     job_record.price,
                     job_record.job_id
                 )
-                
-                if tx_hash:
-                    # Send payment notification
-                    payment_notification = PaymentNotification(
-                        job_id=job_record.job_id,
-                        tx_hash=tx_hash,
-                        amount=job_record.price,
-                        sender=str(ctx.agent.address),
-                        timestamp=datetime.utcnow()
-                    )
-                    
-                    await ctx.send(job_record.tool_address, payment_notification)
-                    
-                    # Update job status
-                    state_manager.update_job(job_record.job_id, {
-                        "status": JobStatus.PAID,
-                        "payment_timestamp": datetime.utcnow(),
-                        "notes": job_record.notes + f"\\nPayment sent: {tx_hash}"
-                    })
-                    
-                    ctx.logger.info(f"Payment sent for job {job_record.job_id}: {tx_hash}")
-                    ctx.logger.info(f"Task completed successfully! GitHub issue: {receipt.output_ref}")
-                    
-                else:
+
+                if not tx_hash:
                     raise PaymentError("Payment transaction failed")
-                    
+
+                payment_time = datetime.utcnow()
+                payment_notification = PaymentNotification(
+                    job_id=job_record.job_id,
+                    tx_hash=tx_hash,
+                    amount=job_record.price,
+                    sender=str(ctx.agent.address),
+                    timestamp=payment_time
+                )
+
+                await ctx.send(job_record.tool_address, payment_notification)
+
+                state_manager.update_job(
+                    job_record.job_id,
+                    {
+                        "status": JobStatus.PAID,
+                        "payment_timestamp": payment_time,
+                        "payment_tx_hash": tx_hash,
+                        "notes": notes_base + f"\nPayment sent: {tx_hash}"
+                    }
+                )
+                notes_base += f"\nPayment sent: {tx_hash}"
+
+                ctx.logger.info(f"Payment sent for job {job_record.job_id}: {tx_hash}")
+                ctx.logger.info(f"Task completed successfully! GitHub issue: {receipt.output_ref}")
+
+                if job_record.bond_amount:
+                    try:
+                        bond_return_tx = await payment_manager.return_bond(
+                            ctx,
+                            job_record.tool_address,
+                            job_record.bond_amount,
+                            job_record.job_id
+                        )
+                        if bond_return_tx:
+                            return_time = datetime.utcnow()
+                            bond_return_message = BondNotification(
+                                job_id=job_record.job_id,
+                                tx_hash=bond_return_tx,
+                                amount=job_record.bond_amount,
+                                action=BondAction.RETURNED,
+                                sender=str(ctx.agent.address),
+                                timestamp=return_time
+                            )
+                            await ctx.send(job_record.tool_address, bond_return_message)
+
+                            state_manager.update_job(
+                                job_record.job_id,
+                                {
+                                    "bond_return_tx_hash": bond_return_tx,
+                                    "bond_return_timestamp": return_time,
+                                    "notes": notes_base + f"\nBond returned: {bond_return_tx}"
+                                }
+                            )
+                            notes_base += f"\nBond returned: {bond_return_tx}"
+                            ctx.logger.info(f"Bond returned to tool for job {job_record.job_id}: {bond_return_tx}")
+                    except PaymentError as bond_error:
+                        ctx.logger.error(f"Failed to return bond for job {job_record.job_id}: {bond_error}")
+                        state_manager.update_job(
+                            job_record.job_id,
+                            {
+                                "notes": notes_base + f"\nBond return failed: {bond_error}"
+                            }
+                        )
+
             except PaymentError as e:
                 ctx.logger.error(f"Payment failed for job {job_record.job_id}: {e}")
-                state_manager.update_job(job_record.job_id, {
-                    "status": JobStatus.FAILED,
-                    "notes": job_record.notes + f"\\nPayment failed: {str(e)}"
-                })
+                state_manager.update_job(
+                    job_record.job_id,
+                    {
+                        "status": JobStatus.FAILED,
+                        "notes": notes_base + f"\nPayment failed: {str(e)}"
+                    }
+                )
         else:
-            ctx.logger.warning(f"Verification failed for job {job_record.job_id}: {verification_result.details}")
-            state_manager.update_job(job_record.job_id, {
-                "status": JobStatus.FAILED,
-                "notes": job_record.notes + f"\\nVerification failed: {verification_result.details}"
-            })
-            
+            ctx.logger.warning(
+                f"Verification failed for job {job_record.job_id}: {verification_result.details}"
+            )
+            state_manager.update_job(
+                job_record.job_id,
+                {
+                    "status": JobStatus.FAILED,
+                    "notes": notes_base + f"\nVerification failed: {verification_result.details}"
+                }
+            )
+
     except Exception as e:
         ctx.logger.error(f"Error in verify_and_pay: {e}")
-        state_manager.update_job(job_record.job_id, {
-            "status": JobStatus.FAILED,
-            "notes": job_record.notes + f"\\nVerification error: {str(e)}"
-        })
+        state_manager.update_job(
+            job_record.job_id,
+            {
+                "status": JobStatus.FAILED,
+                "notes": (job_record.notes or "") + f"\nVerification error: {str(e)}"
+            }
+        )
+
 
 # Chat protocol handlers for ASI:One integration
 @chat_proto.on_message(ChatMessage)
