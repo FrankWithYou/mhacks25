@@ -1,0 +1,165 @@
+project overview
+
+goal: a tiny, trust-minimized marketplace where a client agent pays a tool agent to perform a real action against an external API. payment only happens if the client can verify the result independently.
+
+example task (recommended): “create a GitHub issue in repo X and return the URL.”
+— easy to demo, objectively verifiable with a GET, and familiar to judges.
+
+core components (MVP)
+
+client agent (buyer)
+
+discovers tool agents (via Agentverse search or preconfigured address)
+
+requests a quote → accepts → sends job
+
+verifies result (independent API call)
+
+releases payment (direct pay) only if verification passes
+
+tool agent (seller)
+
+advertises capability/price terms
+
+executes the job (calls GitHub API, or any tool)
+
+returns a signed receipt including a verifiable reference (URL/id/hash)
+
+puts up a bond (small refundable stake) to discourage lying (escrow-lite)
+
+(optional) arbiter agent (stretch)
+
+deterministic referee; on timeout/dispute, re-checks verifier URL and decides “pay” vs “refund”
+
+useful if you wire a simple on-chain escrow later
+
+payment rail
+
+use native FET for: (a) tool bond, (b) client→tool payment on success
+
+MVP: direct token transfer post-verification
+
+stretch: minimal CosmWasm escrow with release/refund
+
+trust & threat model (MVP)
+
+identity & authenticity: uAgents envelopes are signed; each agent has a stable address.
+
+no blind trust: client never pays until it verifies via an objective check (e.g., HTTP GET to GitHub issue URL).
+
+griefing resistance (lightweight): tool posts a bond first; if verification fails or tool ghosts, client can keep the bond (or simply refuses to pay).
+
+privacy: choose tasks where verification doesn’t leak secrets (public APIs or redacted data).
+
+minimal protocols (message schemas)
+# Quote phase
+QuoteRequest: { task: str, payload: dict }       # e.g. {"task":"create_github_issue","payload":{"repo":"org/repo","title":"..."}}
+QuoteResponse:{ job_id: str, price: int, denom: "FET", ttl: int, terms_hash: str, bond_required:int }
+
+# Perform phase
+PerformRequest:{ job_id: str, payload: dict }    # mirrors quote payload; client signs & echoes job_id
+
+# Result / receipt
+Receipt: { job_id: str, output_ref: str, verifier_url: str, verifier_params: dict,
+           ts: int, tool_sig: str }              # tool signs (job_id|output_ref|ts)
+
+
+verification contract (off-chain, simple):
+
+client fetches verifier_url (e.g., GitHub issue endpoint)
+
+checks fields (title matches, repo matches, creator matches tool’s configured account)
+
+checks tool_sig against tool’s pubkey
+
+if all pass → pay; else no pay
+
+payment & bond flow (no on-chain escrow in MVP)
+
+tool bond (optional but recommended):
+client requests a quote → tool replies with bond_required (e.g., 1 FET).
+tool sends bond to client’s address (or a neutral bond address controlled by arbiter agent).
+client proceeds only after bond observed (via ledger query).
+
+success path: after verification → client sends price FET to tool; client returns bond to tool.
+
+failure/timeout: client keeps (or simply returns) the bond; no service payment.
+
+this “bond-then-pay” pattern gives real skin-in-the-game without writing a contract on day 1.
+
+external API choices (pick one)
+
+GitHub issues (best demo): POST to create issue; GET to verify.
+
+LibreTranslate: translate text; verify by checking non-empty + language code.
+
+OpenWeather: fetch forecast; verify by re-calling endpoint and diffing subset.
+
+Twilio SMS (paid): send SMS; verify by querying message SID (harder to show on stage).
+
+storage/state you’ll need
+
+client: job table {job_id, tool_addr, quote, accepted_at, verified_at, paid_tx}
+
+tool: job table {job_id, client_addr, request_payload, result, receipt_sig}
+
+minimal persistence: local file/kv or sqlite is fine
+
+happy-path flow (end-to-end)
+
+discover tool agent (search, or paste known address)
+
+quote: client → tool (QuoteRequest)
+tool → client (QuoteResponse)
+
+bond (optional): tool sends small FET bond to client; client sees ledger tx
+
+perform: client → tool (PerformRequest)
+
+execute: tool hits GitHub API; builds Receipt; signs and returns
+
+verify: client independently GETs verifier_url, checks fields + signature
+
+settle: client sends FET payment to tool; client returns tool bond
+
+log/demo: show Agentverse inspector, tx hashes, and the created GitHub issue
+
+minimal code checklist
+
+ spin up uAgents for client & tool (proxy enabled for discoverability)
+
+ define pydantic Models for messages above
+
+ implement message handlers (quote → perform → receipt)
+
+ tool: env vars for API keys; use httpx for calls
+
+ client: verification function (pure + easy to test)
+
+ payments: ctx.ledger.send_tokens(to_addr, amount, "FET", wallet) and simple balance queries
+
+ (optional) tiny REST endpoint on each agent for UI status (for your demo page)
+
+demo UX (simple + convincing)
+
+left pane: client log (quote/perform/verify/pay)
+
+right pane: tool log (bond received, API call, receipt sent)
+
+links/buttons:
+
+open Agentverse inspector for each agent (shows signed traffic)
+
+open GitHub issue URL returned in the receipt
+
+show tx hash for payment (and bond if you implement it)
+
+testing scenarios
+
+✅ success: correct issue created → auto-pay
+
+❌ tool lies: returns URL that doesn’t exist → verification fails → no pay
+
+⏱️ timeout: tool doesn’t respond in TTL → job canceled; (keep or refund bond)
+
+🔁 replay defense: client includes job_id + terms_hash and rejects mismatched receipts
