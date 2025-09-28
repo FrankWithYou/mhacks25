@@ -35,8 +35,8 @@ class PaymentManager:
         """
         try:
             # Get wallet balance using the agent's ledger
-            balance = ctx.ledger.query_bank_balance(ctx.address, "atestfet")
-            logger.info(f"Current balance for {ctx.address}: {balance} atestfet")
+            balance = ctx.ledger.query_bank_balance(ctx.agent.address, "atestfet")
+            logger.info(f"Current balance for {ctx.agent.address}: {balance} atestfet")
             return int(balance)
             
         except Exception as e:

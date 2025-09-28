@@ -124,7 +124,7 @@ async def handle_quote_request(ctx: Context, sender: str, msg: QuoteRequest):
             ttl=DEFAULT_TTL,
             terms_hash=terms_hash,
             bond_required=DEFAULT_BOND,
-            tool_address=str(ctx.address),
+            tool_address=str(ctx.agent.address),
             timestamp=datetime.utcnow()
         )
         
@@ -135,7 +135,7 @@ async def handle_quote_request(ctx: Context, sender: str, msg: QuoteRequest):
             payload=msg.payload,
             status=JobStatus.QUOTED,
             client_address=sender,
-            tool_address=str(ctx.address),
+            tool_address=str(ctx.agent.address),
             price=DEFAULT_PRICE,
             bond_amount=DEFAULT_BOND,
             quote_timestamp=datetime.utcnow(),
