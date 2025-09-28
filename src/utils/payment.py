@@ -19,9 +19,13 @@ class PaymentError(Exception):
 class PaymentManager:
     """Manages FET token payments and bonds"""
     
-    def __init__(self):
-        """Initialize payment manager"""
-        pass
+    def __init__(self, agent=None):
+        """Initialize payment manager
+        
+        Args:
+            agent: Optional agent instance for wallet access
+        """
+        self.agent = agent
     
     async def get_balance(self, ctx: Context) -> int:
         """
@@ -34,15 +38,18 @@ class PaymentManager:
             Balance in atestfet (smallest unit)
         """
         try:
-            # Resolve wallet address from context safely across versions
+            # Resolve wallet address from context or use stored agent
             wallet_address = None
-            try:
-                wallet_address = ctx.wallet.address()  # type: ignore[attr-defined]
-            except Exception:
+            if self.agent and hasattr(self.agent, 'wallet'):
+                wallet_address = self.agent.wallet.address()
+            else:
                 try:
-                    wallet_address = ctx.agent.wallet.address()  # type: ignore[attr-defined]
+                    wallet_address = ctx.wallet.address()  # type: ignore[attr-defined]
                 except Exception:
-                    raise PaymentError("Wallet not available in context")
+                    try:
+                        wallet_address = ctx.agent.wallet.address()  # type: ignore[attr-defined]
+                    except Exception:
+                        raise PaymentError("Wallet not available in context")
             balance = ctx.ledger.query_bank_balance(wallet_address, "atestfet")
             logger.info(f"Current balance for {wallet_address}: {balance} atestfet")
             return int(balance)
@@ -74,13 +81,17 @@ class PaymentManager:
             
             # Send tokens using the agent's ledger
             # Resolve wallet object
-            try:
-                wallet_obj = ctx.wallet  # type: ignore[attr-defined]
-            except Exception:
+            wallet_obj = None
+            if self.agent and hasattr(self.agent, 'wallet'):
+                wallet_obj = self.agent.wallet
+            else:
                 try:
-                    wallet_obj = ctx.agent.wallet  # type: ignore[attr-defined]
+                    wallet_obj = ctx.wallet  # type: ignore[attr-defined]
                 except Exception:
-                    wallet_obj = None
+                    try:
+                        wallet_obj = ctx.agent.wallet  # type: ignore[attr-defined]
+                    except Exception:
+                        wallet_obj = None
             if wallet_obj is None:
                 raise PaymentError("Wallet not available in context")
 
@@ -176,14 +187,18 @@ class PaymentManager:
             
             # Request tokens from faucet
             # Resolve wallet address
-            try:
-                faucet_address = ctx.wallet.address()  # type: ignore[attr-defined]
-            except Exception:
+            faucet_address = None
+            if self.agent and hasattr(self.agent, 'wallet'):
+                faucet_address = self.agent.wallet.address()
+            else:
                 try:
-                    faucet_address = ctx.agent.wallet.address()  # type: ignore[attr-defined]
+                    faucet_address = ctx.wallet.address()  # type: ignore[attr-defined]
                 except Exception:
-                    logger.warning("Wallet address not available; cannot request faucet")
-                    return False
+                    try:
+                        faucet_address = ctx.agent.wallet.address()  # type: ignore[attr-defined]
+                    except Exception:
+                        logger.warning("Wallet address not available; cannot request faucet")
+                        return False
 
             faucet_response = get_faucet(faucet_address)
             

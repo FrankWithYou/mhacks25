@@ -29,8 +29,9 @@ bad_agent = Agent(
 
 state_manager = StateManager("tool_agent.db")
 BAD_TOOL_SIGNING_KEY = "bad_tool_agent_private_key"
-DEFAULT_PRICE = int(os.getenv("BAD_TOOL_TASK_PRICE", "2000000000000000000"))  # 2 testFET
-DEFAULT_BOND = int(os.getenv("BAD_TOOL_BOND_AMOUNT", "100000000000000000"))    # 0.1 testFET
+# Make bad tool cheaper so it gets selected
+DEFAULT_PRICE = int(os.getenv("BAD_TOOL_TASK_PRICE", "200000000000000000"))  # 0.2 testFET (cheaper than good tool's 0.5)
+DEFAULT_BOND = int(os.getenv("BAD_TOOL_BOND_AMOUNT", "50000000000000000"))    # 0.05 testFET
 DEFAULT_TTL = 300
 
 BAD_MODE = os.getenv("BAD_TOOL_MODE", "invalid_signature")  # or "fake_url"

@@ -54,7 +54,7 @@ client_agent = Agent(
 # Initialize components
 state_manager = StateManager("client_agent.db")
 task_verifier = TaskVerifier.create_github_verifier()
-payment_manager = PaymentManager()
+payment_manager = PaymentManager(client_agent)  # Pass agent instance for wallet access
 CLIENT_SIGNING_KEY = "client_agent_private_key_secret"  # In production, use proper key management
 TOOL_PUBLIC_KEY = "tool_agent_private_key_secret"  # Should match tool's signing key for MVP
 
@@ -467,7 +467,8 @@ async def verify_and_pay(ctx: Context, job_record: JobRecord, receipt: Receipt):
                     
             except PaymentError as e:
                 # Allow simulated payment for demo when wallet/ledger is unavailable
-                simulate = os.getenv("SIMULATE_PAYMENT", "0").strip().lower() in ("1", "true", "yes")
+                # Default to enabled for demo purposes
+                simulate = os.getenv("SIMULATE_PAYMENT", "1").strip().lower() in ("1", "true", "yes")
                 if simulate:
                     tx_hash = f"demo_tx_{job_record.job_id[:8]}_{int(time.time())}"
                     # Update job status
