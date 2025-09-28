@@ -172,6 +172,8 @@ class MarketplaceDashboard {
         document.getElementById('currentStep').textContent = sourcePrefix + data.message;
 
         // Show action link if available (for issues or translations)
+        // Commented out - action link removed from UI
+        /*
         if (data.issue_url) {
             const actionLink = document.getElementById('actionLink');
             if (actionLink) {
@@ -189,6 +191,7 @@ class MarketplaceDashboard {
                 }
             }
         }
+        */
 
         // Add to activity feed
         let activityClass = 'info';
