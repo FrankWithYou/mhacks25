@@ -53,6 +53,7 @@ class QuoteResponse(BaseModel):
     terms_hash: str = Field(..., description="Hash of the terms for integrity")
     bond_required: int = Field(..., description="Bond amount required in atestfet")
     tool_address: str = Field(..., description="Tool agent address")
+    tool_wallet_address: Optional[str] = Field(default=None, description="Tool wallet address for payments")
     tool_pubkey: Optional[str] = Field(default=None, description="Tool public key for verification (MVP: HMAC shared secret)")
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 

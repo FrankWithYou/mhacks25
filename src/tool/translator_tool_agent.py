@@ -8,7 +8,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 from typing import Optional
 
-import httpx
+from googletrans import Translator
 from uagents import Agent, Context
 from uagents.setup import fund_agent_if_low
 from uagents import Protocol
@@ -120,6 +120,7 @@ async def on_quote(ctx: Context, sender: str, msg: QuoteRequest):
             terms_hash=terms_hash,
             bond_required=DEFAULT_BOND,
             tool_address=str(ctx.agent.address),
+            tool_wallet_address=str(translator_agent.wallet.address()),  # Include wallet address for payments
             tool_pubkey=TRANSLATOR_SIGNING_KEY,
             timestamp=datetime.utcnow(),
         )
@@ -179,49 +180,54 @@ async def on_perform(ctx: Context, sender: str, msg: PerformRequest):
         ctx.logger.error(f"Perform error: {e}")
 
 async def translate_text(text: str, source_lang: str, target_lang: str) -> str:
-    """Translate text using LibreTranslate or fallback to mock translation"""
+    """Translate text using Google Translate"""
     
-    # Try using the public LibreTranslate API
-    urls = [
-        os.getenv("LIBRETRANSLATE_URL", "https://libretranslate.com/translate"),
-        "https://translate.terraprint.co/translate",  # Alternative public instance
-        "https://translate.argosopentech.com/translate",  # Another alternative
-    ]
+    try:
+        # Initialize the translator
+        translator = Translator()
+        
+        # Handle source language
+        src = source_lang if source_lang != "auto" else "auto"
+        
+        logger.info(f"Translating '{text[:50]}...' from {src} to {target_lang}")
+        
+        # Perform translation - googletrans 4.0.2 is async
+        result = await translator.translate(text, src=src, dest=target_lang)
+        
+        if result and result.text:
+            logger.info(f"Translation successful: {text[:30]}... -> {result.text[:30]}...")
+            return f"Translated to {target_lang}: {result.text}"
+        else:
+            logger.warning("Google Translate returned empty result")
+            
+    except Exception as e:
+        logger.warning(f"Google Translate failed: {e}")
     
-    for url in urls:
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                # Prepare the request data
-                data = {
-                    "q": text,
-                    "source": source_lang if source_lang != "auto" else "en",  # Use 'en' as default if auto
-                    "target": target_lang,
-                    "format": "text"
-                }
-                
-                logger.info(f"Trying translation service at {url}")
-                resp = await client.post(url, json=data)  # Use json instead of data
-                
-                if resp.status_code == 200:
-                    result = resp.json()
-                    translated = result.get("translatedText", "")
-                    if translated:
-                        logger.info(f"Translation successful: {text[:30]}... -> {translated[:30]}...")
-                        return f"Translated to {target_lang}: {translated}"
-                else:
-                    logger.warning(f"Translation service returned {resp.status_code}: {resp.text[:200]}")
-        except Exception as e:
-            logger.warning(f"Translation service {url} failed: {e}")
-            continue
-    
-    # Fallback to mock translation with some basic transformations
+    # Fallback to enhanced mock translation
     logger.info("Using mock translation as fallback")
     
-    # Simple mock translations
+    # Enhanced mock translations
     mock_translations = {
-        "es": {"hello": "hola", "world": "mundo", "thank you": "gracias"},
-        "fr": {"hello": "bonjour", "world": "monde", "thank you": "merci"},
-        "de": {"hello": "hallo", "world": "welt", "thank you": "danke"},
+        "es": {
+            "hello": "hola", "world": "mundo", "thank you": "gracias",
+            "good": "bueno", "morning": "mañana", "night": "noche",
+            "create": "crear", "issue": "problema", "test": "prueba"
+        },
+        "fr": {
+            "hello": "bonjour", "world": "monde", "thank you": "merci",
+            "good": "bon", "morning": "matin", "night": "nuit",
+            "create": "créer", "issue": "problème", "test": "test"
+        },
+        "de": {
+            "hello": "hallo", "world": "welt", "thank you": "danke",
+            "good": "gut", "morning": "morgen", "night": "nacht",
+            "create": "erstellen", "issue": "problem", "test": "test"
+        },
+        "ja": {
+            "hello": "こんにちは", "world": "世界", "thank you": "ありがとう",
+            "good": "良い", "morning": "朝", "night": "夜",
+            "test": "テスト"
+        },
     }
     
     if target_lang in mock_translations:
@@ -230,6 +236,7 @@ async def translate_text(text: str, source_lang: str, target_lang: str) -> str:
             if eng in text_lower:
                 text = text.replace(eng, trans)
                 text = text.replace(eng.capitalize(), trans.capitalize())
+                text = text.replace(eng.upper(), trans.upper())
     
     return f"[Mock] Translated to {target_lang}: {text}"
 

@@ -17,9 +17,9 @@ load_dotenv()
 
 def main():
     """Main entry point for the client agent"""
-    print("=" * 60)
-    print("💳 MARKETPLACE CLIENT AGENT")
-    print("=" * 60)
+    print("\n" + "="*60)
+    print("💳 CLIENT AGENT (MARKETPLACE)")
+    print("="*60)
     print()
     
     print("🚀 Starting Marketplace Client Agent...")

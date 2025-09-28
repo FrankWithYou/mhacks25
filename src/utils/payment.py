@@ -95,21 +95,77 @@ class PaymentManager:
             if wallet_obj is None:
                 raise PaymentError("Wallet not available in context")
 
-            tx_response = ctx.ledger.send_tokens(
-                destination=recipient,
-                amount=amount,
-                denom="atestfet",
-                wallet=wallet_obj,
-                memo=memo
-            )
+            # The ledger's send_tokens needs 'sender' parameter as a Wallet object
+            tx_response = None
             
-            if tx_response and hasattr(tx_response, 'hash'):
-                tx_hash = tx_response.hash
-                logger.info(f"Payment sent: {amount} atestfet to {recipient}, tx: {tx_hash}")
-                return tx_hash
+            # Try different approaches to send the payment
+            if self.agent and hasattr(self.agent, '_ledger') and hasattr(self.agent, 'wallet'):
+                # Method 1: Use the agent's ledger with the agent's wallet
+                try:
+                    tx_response = self.agent._ledger.send_tokens(
+                        destination=recipient,
+                        amount=amount,
+                        denom="atestfet",
+                        sender=self.agent.wallet,
+                        memo=memo
+                    )
+                    logger.info("Payment sent using agent._ledger")
+                except Exception as e:
+                    logger.warning(f"agent._ledger method failed: {e}")
+                    tx_response = None
+            
+            # If first method failed or not available, try context ledger
+            if tx_response is None and wallet_obj:
+                try:
+                    tx_response = ctx.ledger.send_tokens(
+                        destination=recipient,
+                        amount=amount,
+                        denom="atestfet",
+                        sender=wallet_obj,
+                        memo=memo
+                    )
+                    logger.info("Payment sent using ctx.ledger")
+                except TypeError as e:
+                    # If 'sender' parameter is not recognized, try without it (older API)
+                    logger.warning(f"ctx.ledger with sender failed: {e}, trying without sender param")
+                    try:
+                        # Create a new ledger client with the wallet
+                        from cosmpy.aerial.client import LedgerClient, NetworkConfig
+                        ledger_client = LedgerClient(NetworkConfig.fetchai_dorado_testnet())
+                        tx_response = ledger_client.send_tokens(
+                            destination=recipient,
+                            amount=amount, 
+                            denom="atestfet",
+                            sender=wallet_obj,
+                            memo=memo
+                        )
+                        logger.info("Payment sent using new LedgerClient")
+                    except Exception as e2:
+                        logger.error(f"All payment methods failed: {e2}")
+                        raise PaymentError(f"Unable to send payment: {e2}")
+            
+            if not tx_response:
+                raise PaymentError("No wallet available for payment or all methods failed")
+            
+            if tx_response:
+                # Check for different hash attribute names
+                tx_hash = None
+                if hasattr(tx_response, 'tx_hash'):
+                    tx_hash = tx_response.tx_hash
+                elif hasattr(tx_response, 'hash'):
+                    tx_hash = tx_response.hash
+                elif hasattr(tx_response, 'txhash'):
+                    tx_hash = tx_response.txhash
+                    
+                if tx_hash:
+                    logger.info(f"Payment sent: {amount} atestfet to {recipient}, tx: {tx_hash}")
+                    return str(tx_hash)
+                else:
+                    logger.error(f"Payment response has no hash. Response type: {type(tx_response)}")
+                    raise PaymentError("Transaction has no hash")
             else:
-                logger.error(f"Payment failed - no transaction hash returned")
-                raise PaymentError("Payment transaction failed")
+                logger.error(f"Payment failed - no transaction response")
+                raise PaymentError("No transaction response")
                 
         except Exception as e:
             logger.error(f"Payment error: {e}")
@@ -200,9 +256,10 @@ class PaymentManager:
                         logger.warning("Wallet address not available; cannot request faucet")
                         return False
 
-            faucet_response = get_faucet(faucet_address)
-            
-            if faucet_response:
+            # Get the faucet API instance and request funds
+            faucet_api = get_faucet()
+            try:
+                faucet_api.get_wealth(faucet_address)
                 logger.info("Faucet request successful")
                 # Wait a moment for the transaction to process
                 import asyncio
@@ -211,8 +268,8 @@ class PaymentManager:
                 # Check balance again
                 new_balance = await self.get_balance(ctx)
                 return new_balance >= required_amount
-            else:
-                logger.warning("Faucet request failed")
+            except Exception as faucet_error:
+                logger.warning(f"Faucet request failed: {faucet_error}")
                 return False
                 
         except Exception as e:

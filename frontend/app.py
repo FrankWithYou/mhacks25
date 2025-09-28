@@ -175,6 +175,29 @@ async def receive_agent_event(payload: Dict[str, Any] = Body(...)):
         
         status_enum = _parse_status(status_str)
 
+        # Special handling for balance_update status
+        if status_str.lower() == "balance_update":
+            # Forward balance update directly
+            await manager.broadcast({
+                "type": "balance_update",
+                "source": source,
+                "message": message,
+                "extra": payload.get("extra", {})
+            })
+            return {"ok": True}
+        
+        # Special handling for AVAILABLE status with agent_info (client startup)
+        if status_str.upper() == "AVAILABLE" and payload.get("extra", {}).get("agent_info"):
+            agent_info_data = payload["extra"]["agent_info"]
+            # Broadcast as agent_update
+            await manager.broadcast({
+                "type": "agent_update",
+                "source": source,
+                "agent": agent_info_data,
+                "extra": payload.get("extra", {})
+            })
+            return {"ok": True}
+
         # Registry updates
         if tool_info and isinstance(tool_info, dict):
             addr = tool_info.get("address") or tool_address
@@ -195,6 +218,7 @@ async def receive_agent_event(payload: Dict[str, Any] = Body(...)):
                 "type": "agent_update",
                 "source": source,
                 "agent": agent_info,
+                "extra": payload.get("extra", {})  # Include extra field with balance_atestfet
             })
 
         # Upsert job in local dashboard DB if we have a job_id

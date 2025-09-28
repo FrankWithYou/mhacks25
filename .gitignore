@@ -61,3 +61,15 @@ venv.bak/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Log files
+*.log
+
+# Database files
+*.db
+
+# Test files
+test_*.py
+
+# Shell scripts (if temporary)
+start_agents_no_simulation.sh

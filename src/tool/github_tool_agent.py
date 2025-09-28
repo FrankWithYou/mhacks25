@@ -144,6 +144,7 @@ async def handle_quote_request(ctx: Context, sender: str, msg: QuoteRequest):
             terms_hash=terms_hash,
             bond_required=DEFAULT_BOND,
             tool_address=str(ctx.agent.address),
+            tool_wallet_address=str(tool_agent.wallet.address()),  # Include wallet address for payments
             tool_pubkey=TOOL_SIGNING_KEY,
             timestamp=datetime.utcnow()
         )

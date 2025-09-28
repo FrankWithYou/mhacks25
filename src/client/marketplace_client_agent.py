@@ -12,7 +12,7 @@ from typing import Optional
 
 from dotenv import load_dotenv
 from uagents import Agent, Context, Protocol
-from uagents.setup import fund_agent_if_low
+from uagents.network import get_faucet
 from uagents_core.contrib.protocols.chat import (
     ChatAcknowledgement,
     ChatMessage,
@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 # Initialize the client agent
 client_agent = Agent(
-    name="marketplace_client",
+    name="CLIENT_AGENT",
     port=8002,
     seed="marketplace_client_secret_seed_phrase",  # In production, use proper seed management
     endpoint=["http://127.0.0.1:8002/submit"]
@@ -60,6 +60,9 @@ TOOL_PUBLIC_KEY = "tool_agent_private_key_secret"  # Should match tool's signing
 
 # Map job_id -> tool_pubkey for signature verification
 TOOL_KEYS: dict[str, str] = {}
+
+# Map job_id -> tool wallet address for payments
+TOOL_WALLETS: dict[str, str] = {}
 
 # Map job_id -> original request payload
 PENDING_REQUESTS: dict[str, dict] = {}
@@ -88,8 +91,22 @@ async def startup_handler(ctx: Context):
     try:
         logger.info(f"Client agent {client_agent.address} started successfully")
         
-        # Fund agent if low on tokens
-        fund_agent_if_low(client_agent.wallet.address())
+        # Fund agent with enough tokens for multiple expensive queries
+        # Each faucet request gives ~10 testFET, we want ~30 testFET total
+        wallet_addr = client_agent.wallet.address()
+        logger.info(f"Funding client wallet {wallet_addr} with testFET...")
+        
+        # Get faucet API instance
+        faucet_api = get_faucet()
+        
+        # Request funds multiple times to build up balance
+        # No need for delays - faucet requests are async
+        for i in range(3):  # 3 x 10 = 30 testFET
+            try:
+                faucet_api.get_wealth(wallet_addr)
+                logger.info(f"Faucet request {i+1} sent")
+            except Exception as e:
+                logger.warning(f"Funding attempt {i+1} failed: {e}")
         
         # Ensure minimum balance for operations (best-effort)
         try:
@@ -107,13 +124,8 @@ async def startup_handler(ctx: Context):
         except Exception:
             balance = 0
         # Resolve wallet address compatibly
-        try:
-            wallet_address = ctx.wallet.address()  # type: ignore[attr-defined]
-        except Exception:
-            try:
-                wallet_address = ctx.agent.wallet.address()  # type: ignore[attr-defined]
-            except Exception:
-                wallet_address = "unknown"
+        wallet_address = client_agent.wallet.address()
+        
         await send_frontend_event(
             source="client",
             status="AVAILABLE",
@@ -218,6 +230,13 @@ async def handle_quote_response(ctx: Context, sender: str, msg: QuoteResponse):
             TOOL_KEYS[msg.job_id] = msg.tool_pubkey
         else:
             TOOL_KEYS[msg.job_id] = TOOL_PUBLIC_KEY
+            
+        # Store tool wallet address for payments
+        if msg.tool_wallet_address:
+            TOOL_WALLETS[msg.job_id] = msg.tool_wallet_address
+        else:
+            # Fallback - this will fail but at least we'll get a clear error
+            TOOL_WALLETS[msg.job_id] = sender
 
         # Get the original request payload
         # Since we don't have the job_id when making the request, we need to infer it from the task type
@@ -421,11 +440,15 @@ async def verify_and_pay(ctx: Context, job_record: JobRecord, receipt: Receipt):
                 job_id=job_record.job_id,
             )
             
-            # Send payment
+            # Send payment to the tool's wallet address (not agent address)
             try:
+                # Get the wallet address for this tool
+                tool_wallet_address = TOOL_WALLETS.get(job_record.job_id, job_record.tool_address)
+                ctx.logger.info(f"Sending payment to wallet address: {tool_wallet_address}")
+                
                 tx_hash = await payment_manager.send_job_payment(
                     ctx,
-                    job_record.tool_address,
+                    tool_wallet_address,  # Use wallet address, not agent address
                     job_record.price,
                     job_record.job_id
                 )
@@ -466,8 +489,7 @@ async def verify_and_pay(ctx: Context, job_record: JobRecord, receipt: Receipt):
                     raise PaymentError("Payment transaction failed")
                     
             except PaymentError as e:
-                # Allow simulated payment for demo when wallet/ledger is unavailable
-                # Default to enabled for demo purposes
+                # Allow simulation as fallback when real payment fails
                 simulate = os.getenv("SIMULATE_PAYMENT", "1").strip().lower() in ("1", "true", "yes")
                 if simulate:
                     tx_hash = f"demo_tx_{job_record.job_id[:8]}_{int(time.time())}"
@@ -659,11 +681,23 @@ async def handle_chat_acknowledgement(ctx: Context, sender: str, msg: ChatAcknow
     """Handle chat acknowledgements"""
     ctx.logger.info(f"Received acknowledgement from {sender} for message {msg.acknowledged_msg_id}")
 
-# Add a periodic task to check for pending jobs
+# Add a periodic task to check for pending jobs and update balance
 @client_agent.on_interval(period=30.0)
 async def check_pending_jobs(ctx: Context):
-    """Periodically check for jobs that might be stuck or timed out"""
+    """Periodically check for jobs that might be stuck or timed out and update balance"""
     try:
+        # Update balance display
+        try:
+            balance = await payment_manager.get_balance(ctx)
+            await send_frontend_event(
+                source="client",
+                status="balance_update",
+                message="Balance update",
+                extra={"balance": balance}
+            )
+        except Exception as e:
+            ctx.logger.debug(f"Balance check failed: {e}")
+        
         # Get jobs that might need attention
         pending_jobs = state_manager.get_jobs_by_status(JobStatus.ACCEPTED, str(ctx.agent.address))
         pending_jobs.extend(state_manager.get_jobs_by_status(JobStatus.IN_PROGRESS, str(ctx.agent.address)))
@@ -674,7 +708,7 @@ async def check_pending_jobs(ctx: Context):
                 ctx.logger.warning(f"Job {job.job_id} appears to have timed out")
                 state_manager.update_job(job.job_id, {
                     "status": JobStatus.FAILED,
-                    "notes": job.notes + "\\nJob timed out"
+                    "notes": job.notes + "\nJob timed out"
                 })
                 await send_frontend_event(
                     source="client",
@@ -772,19 +806,23 @@ async def process_control_queue(ctx: Context):
             elif cmd.get("type") == "translate":
                 agents = await discover_agents(TaskType.TRANSLATE_TEXT.value)
                 agents = await filter_reachable_agents(agents)
+                agent_addr = None
                 if agents:
                     agent_addr = sorted(agents, key=lambda a: a.get("price", 10**30))[0].get("address")
-                payload = {"text": cmd.get("text", ""), "source_lang": "auto", "target_lang": cmd.get("target_lang", "en")}
-                quote_request = QuoteRequest(
-                    task=TaskType.TRANSLATE_TEXT,
-                    payload=payload,
-                    client_address=str(ctx.agent.address),
-                    timestamp=datetime.utcnow(),
-                )
-                # Store payload for later use
-                job_id_temp = f"translate_{int(time.time() * 1000)}"
-                PENDING_REQUESTS[job_id_temp] = payload
-                await ctx.send(agent_addr, quote_request)
+                if agent_addr:
+                    payload = {"text": cmd.get("text", ""), "source_lang": "auto", "target_lang": cmd.get("target_lang", "en")}
+                    quote_request = QuoteRequest(
+                        task=TaskType.TRANSLATE_TEXT,
+                        payload=payload,
+                        client_address=str(ctx.agent.address),
+                        timestamp=datetime.utcnow(),
+                    )
+                    # Store payload for later use
+                    job_id_temp = f"translate_{int(time.time() * 1000)}"
+                    PENDING_REQUESTS[job_id_temp] = payload
+                    await ctx.send(agent_addr, quote_request)
+                else:
+                    ctx.logger.warning("No translator agents found")
             elif cmd.get("type") == "ask":
                 text = cmd.get("text", "")
                 intent = infer_intent(text)
@@ -805,8 +843,10 @@ async def process_control_queue(ctx: Context):
                 elif task == TaskType.TRANSLATE_TEXT.value:
                     agents = await discover_agents(TaskType.TRANSLATE_TEXT.value)
                     agents = await filter_reachable_agents(agents)
+                    agent_addr = None
                     if agents:
                         agent_addr = sorted(agents, key=lambda a: a.get("price", 10**30))[0].get("address")
+                    if agent_addr:
                         request_payload = {"text": payload.get("text", text), "source_lang": "auto", "target_lang": payload.get("target_lang", "en")}
                         quote_request = QuoteRequest(
                             task=TaskType.TRANSLATE_TEXT,
@@ -818,6 +858,8 @@ async def process_control_queue(ctx: Context):
                         job_id_temp = f"translate_{int(time.time() * 1000)}"
                         PENDING_REQUESTS[job_id_temp] = request_payload
                         await ctx.send(agent_addr, quote_request)
+                    else:
+                        ctx.logger.warning("No translator agents found for intent")
     except Exception as e:
         ctx.logger.error(f"Control queue processing error: {e}")
 

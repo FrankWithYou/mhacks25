@@ -73,12 +73,29 @@ class MarketplaceDashboard {
     }
 
     handleWebSocketMessage(data) {
+        console.log('WebSocket message received:', data);
         switch (data.type) {
             case 'job_update':
                 this.handleJobUpdate(data);
+                // Check if this event has balance update
+                if (data.extra && data.extra.balance !== undefined) {
+                    console.log('Balance from job_update:', data.extra.balance);
+                    this.updateBalance({balance: data.extra.balance});
+                }
                 break;
             case 'agent_update':
                 this.handleAgentUpdate(data);
+                break;
+            case 'balance_update':
+                console.log('Balance update event received:', data);
+                // Handle balance updates from periodic checks
+                if (data.extra && data.extra.balance !== undefined) {
+                    console.log('Updating balance from extra:', data.extra.balance);
+                    this.updateBalance({balance: data.extra.balance});
+                } else if (data.balance !== undefined) {
+                    console.log('Updating balance directly:', data.balance);
+                    this.updateBalance({balance: data.balance});
+                }
                 break;
             case 'error':
                 this.addActivityMessage(data.message, 'error');
@@ -154,11 +171,23 @@ class MarketplaceDashboard {
         const sourcePrefix = data.source ? `[${data.source.toUpperCase()}] ` : '';
         document.getElementById('currentStep').textContent = sourcePrefix + data.message;
 
-        // Show issue link if available
+        // Show action link if available (for issues or translations)
         if (data.issue_url) {
-            const issueLink = document.getElementById('issueLink');
-            issueLink.style.display = 'block';
-            issueLink.querySelector('a').href = data.issue_url;
+            const actionLink = document.getElementById('actionLink');
+            if (actionLink) {
+                actionLink.style.display = 'block';
+                const actionButton = actionLink.querySelector('a');
+                if (actionButton) {
+                    actionButton.href = data.issue_url;
+                    const actionText = document.getElementById('actionText');
+                    // Customize button based on task type
+                    if (data.issue_url.includes('github.com')) {
+                        actionButton.innerHTML = '<i class="fab fa-github me-1"></i>View GitHub Issue';
+                    } else {
+                        actionButton.innerHTML = '<i class="fas fa-external-link-alt me-1"></i>View Result';
+                    }
+                }
+            }
         }
 
         // Add to activity feed
@@ -448,6 +477,37 @@ class MarketplaceDashboard {
         if (!addr) return;
         this.toolAgents[addr] = agent;
         this.renderToolAgents();
+        
+        // Update balance if it's the client agent (multiple possible data structures)
+        if (data.agent && data.agent.balance_atestfet !== undefined) {
+            this.updateBalance({balance: data.agent.balance_atestfet});
+        } else if (data.agent_info && data.agent_info.balance_atestfet !== undefined) {
+            this.updateBalance({balance: data.agent_info.balance_atestfet});
+        } else if (data.extra && data.extra.agent_info && data.extra.agent_info.balance_atestfet !== undefined) {
+            this.updateBalance({balance: data.extra.agent_info.balance_atestfet});
+        }
+    }
+    
+    updateBalance(data) {
+        console.log('updateBalance called with:', data);
+        const balanceEl = document.getElementById('walletBalance');
+        console.log('Balance element found:', balanceEl);
+        if (balanceEl && data.balance !== undefined) {
+            const balanceInFET = (data.balance / 1e18).toFixed(2);
+            console.log('Setting balance to:', balanceInFET, 'testFET');
+            balanceEl.textContent = `${balanceInFET} testFET`;
+            
+            // Color code based on balance
+            if (data.balance < 1e18) {  // Less than 1 FET
+                balanceEl.className = 'text-danger';
+            } else if (data.balance < 5e18) {  // Less than 5 FET
+                balanceEl.className = 'text-warning';
+            } else {
+                balanceEl.className = 'text-success';
+            }
+        } else {
+            console.log('Balance update failed - element:', balanceEl, 'balance:', data.balance);
+        }
     }
 
     renderToolAgents() {
