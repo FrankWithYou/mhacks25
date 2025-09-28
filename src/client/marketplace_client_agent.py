@@ -111,7 +111,7 @@ async def request_github_issue(ctx: Context, tool_agent_address: str, title: str
                 "body": body or f"Issue created by marketplace client\\nRequested at: {datetime.utcnow().isoformat()}",
                 "labels": labels or ["innovationlab", "hackathon"]
             },
-            client_address=str(ctx.address),
+            client_address=str(ctx.agent.address),
             timestamp=datetime.utcnow()
         )
         
@@ -137,7 +137,7 @@ async def handle_quote_response(ctx: Context, sender: str, msg: QuoteResponse):
             task=TaskType.CREATE_GITHUB_ISSUE,  # Inferred from context
             payload={},  # Will be filled when we accept
             status=JobStatus.QUOTED,
-            client_address=str(ctx.address),
+            client_address=str(ctx.agent.address),
             tool_address=sender,
             price=msg.price,
             bond_amount=msg.bond_required,
@@ -284,7 +284,7 @@ async def verify_and_pay(ctx: Context, job_record: JobRecord, receipt: Receipt):
                         job_id=job_record.job_id,
                         tx_hash=tx_hash,
                         amount=job_record.price,
-                        sender=str(ctx.address),
+                        sender=str(ctx.agent.address),
                         timestamp=datetime.utcnow()
                     )
                     
@@ -383,7 +383,7 @@ async def process_client_chat_request(ctx: Context, sender: str, text: str) -> s
             
         elif "status" in text_lower:
             # Get recent jobs
-            jobs = state_manager.get_jobs_by_agent(str(ctx.address), "client")
+            jobs = state_manager.get_jobs_by_agent(str(ctx.agent.address), "client")
             if jobs:
                 recent_job = jobs[0]  # Most recent
                 return f"Latest job {recent_job.job_id}: {recent_job.status.value}\\n{recent_job.notes}"
@@ -414,8 +414,8 @@ async def check_pending_jobs(ctx: Context):
     """Periodically check for jobs that might be stuck or timed out"""
     try:
         # Get jobs that might need attention
-        pending_jobs = state_manager.get_jobs_by_status(JobStatus.ACCEPTED, str(ctx.address))
-        pending_jobs.extend(state_manager.get_jobs_by_status(JobStatus.IN_PROGRESS, str(ctx.address)))
+        pending_jobs = state_manager.get_jobs_by_status(JobStatus.ACCEPTED, str(ctx.agent.address))
+        pending_jobs.extend(state_manager.get_jobs_by_status(JobStatus.IN_PROGRESS, str(ctx.agent.address)))
         
         for job in pending_jobs:
             # Check if job is too old (timeout)

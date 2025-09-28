@@ -7,7 +7,7 @@ This script demonstrates the complete workflow: quote → perform → verify →
 import asyncio
 import sys
 import os
-from datetime import datetime
+from datetime import datetime, UTC
 
 # Add src to Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
@@ -161,6 +161,8 @@ This demonstrates the complete trust-minimized workflow where:
         print("-" * 20)
         
         print("   🔍 Client agent verifying task completion...")
+        print("   ⏳ Waiting 5 seconds for GitHub API consistency...")
+        await asyncio.sleep(5)
         
         try:
             verification_result = await github_api.verify_issue(

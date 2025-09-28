@@ -96,21 +96,31 @@ class GitHubAPI:
             Dict with verification result and details
         """
         try:
-            # Convert HTML URL to API URL if needed
-            if "github.com" in issue_url and "/issues/" in issue_url:
-                # Convert https://github.com/owner/repo/issues/123 to API URL
+            logger.info(f"Original issue_url: {issue_url}")
+            # Check if it's already an API URL first
+            if "api.github.com/repos/" in issue_url:
+                # It's already an API URL, use as-is
+                api_url = issue_url
+                logger.info(f"Using API URL as-is: {api_url}")
+            elif "github.com" in issue_url and "/issues/" in issue_url and "api.github.com" not in issue_url:
+                # Convert HTML URL to API URL
                 parts = issue_url.replace("https://github.com/", "").split("/")
+                logger.info(f"URL parts: {parts}")
                 if len(parts) >= 4:
                     owner, repo, _, issue_num = parts[:4]
                     api_url = f"{self.base_url}/repos/{owner}/{repo}/issues/{issue_num}"
+                    logger.info(f"Converted to API URL: {api_url}")
                 else:
                     return {"verified": False, "details": "Invalid issue URL format"}
             else:
-                # Assume it's already an API URL
-                api_url = issue_url
+                logger.error(f"Invalid URL format: {issue_url}")
+                return {"verified": False, "details": "Invalid issue URL format"}
             
             async with httpx.AsyncClient() as client:
+                logger.info(f"Making verification request to: {api_url}")
+                logger.info(f"Headers: {self.headers}")
                 response = await client.get(api_url, headers=self.headers)
+                logger.info(f"Response status: {response.status_code}")
                 
                 if response.status_code == 200:
                     issue_data = response.json()
